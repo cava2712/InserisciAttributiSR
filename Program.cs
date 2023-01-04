@@ -1,6 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace InserisciAttributiSR
@@ -10,140 +10,118 @@ namespace InserisciAttributiSR
         static void Main()
         {
             var entitiesPath = @"C:\Temp\Entities";
-            var resourcesPath = @"C:\Temp\AttributeResources.txt";
             if (!Directory.Exists(entitiesPath))
             {
                 throw new Exception("Directory path does not exist in file system");
             }
 
             var files = Directory.GetFiles(entitiesPath, "*.cs", SearchOption.AllDirectories);
-            string resources = string.Empty;
             foreach (var file in files)
             {
                 if (!IsEnumFile(file))
                     continue;
-                resources += "FILE:" + file + "\r\n";
-                resources += InseriesciAttributiNelFileERitornaStringResources(file);
+                InserisciAttributiNelFileERitornaStringResources(file);
             }
-            File.WriteAllText(resourcesPath, string.Empty);
-            File.WriteAllText(resourcesPath, resources);
         }
 
-        private static string InseriesciAttributiNelFileERitornaStringResources(string file)
+        private static void InserisciAttributiNelFileERitornaStringResources(string file)
         {
-            var f = File.ReadAllText(file);
-            string resources = string.Empty;
-            f = RimuoviCommentiDaStringa(f);
-            int i = f.IndexOf("enum", StringComparison.Ordinal);
-            while (f[i] != '{')
-            {
-                i++;
-            }
-            i++; // Entro dentro le parentesi graffe
+            var lines = File.ReadAllLines(file);
+            StringBuilder sbSourceCode = new StringBuilder();
+            StringBuilder sbResources = new StringBuilder();
 
-            var enumCompleti = LeggiTuttiGliEnumCompleti(f, i);
-
-            f = File.ReadAllText(file); // Ripristino i file con anche i commenti
-            foreach (var enumCorrenteCompleto in enumCompleti)
+            bool inEnum = false;
+            bool descriptionAttributeFound = false;
+            foreach (string line in lines)
             {
-                var enumCorrenteNoTrim = enumCorrenteCompleto.TrimEnd().TrimStart();
-                if (enumCorrenteNoTrim.Contains("[SRDescription") || enumCorrenteNoTrim.Contains("[Description"))
+
+                if (!inEnum)
+                {
+                    inEnum = IsEnumDeclare(line);
+                    sbSourceCode.AppendLine(line);
                     continue;
-                var nomeEnumCorrente = TrovaNomeEnum(enumCorrenteNoTrim);
-                resources += ScriviInFileResources(nomeEnumCorrente);
-                string stringSpazi = StringaSpaziIniziali(enumCorrenteCompleto);
-                f = f.Replace(
-                    enumCorrenteNoTrim,
-                     "\r\n" + stringSpazi + $"[SRDescription(AttributeResources.{nomeEnumCorrente})]" + "\r\n" + stringSpazi + enumCorrenteNoTrim);
+                }
+
+                if (IsDescriptionAttribute(line))
+                {
+                    descriptionAttributeFound = true;
+                }
+                else if (IsEnumEntry(line))
+                {
+                    if (!descriptionAttributeFound)
+                    {
+                        sbSourceCode.AppendLine(GetIndentation(line) + string.Format("[SRDescription(\"{0}\")]", GetEnumEntryName(line)));
+                        sbResources.AppendLine(string.Format("{0}\t{1}", GetEnumEntryName(line), Uncamel(GetEnumEntryName(line))));
+                    }
+
+                    descriptionAttributeFound = false;
+                }
+                else if (IsEnumDeclareEnd(line))
+                {
+                    inEnum = false;
+                }
+
+
+                sbSourceCode.AppendLine(line);
             }
 
-            File.WriteAllText(file, string.Empty);
-            File.WriteAllText(file, f);
-
-            return resources;
+            File.AppendAllText("C:\\TEMP\\EnumRes.txt", sbResources.ToString());
+            File.WriteAllText(file + ".result.txt", sbSourceCode.ToString());
         }
 
-        private static string ScriviInFileResources(string nomeResources)
+        private static string Uncamel(string line)
         {
-            var s = nomeResources + '\t';
-            int i = 1;
-            s += nomeResources[0];
-            while (i < nomeResources.Length)
+            string result = line[0].ToString();
+            for (int i = 1; i < line.Length; i++)
             {
-                if (char.IsLower(nomeResources[i]))
-                {
-                    s += nomeResources[i];
-                }
+                if (line[i] < 'a')
+                    result += " " + line[i].ToString().ToLower();
                 else
-                {
-                    s += " " + char.ToLower(nomeResources[i]);
-                }
-                i++;
+                    result += line[i];
             }
 
-            return s + "\r\n";
+            return result;
         }
 
-        private static string StringaSpaziIniziali(string enumCorrenteCompleto)
+        private static string GetEnumEntryName(string line)
         {
-            string s = "";
-            enumCorrenteCompleto = enumCorrenteCompleto.Replace("\r\n", String.Empty);
-            int i = 0;
-            while (i < enumCorrenteCompleto.Length && enumCorrenteCompleto[i] == ' ')
+            Regex regex = new Regex(@"^\s*(?<enumName>[a-zA-Z][a-zA-Z0-9]*)");
+            var match = regex.Match(line);
+            return match.Groups["enumName"].Value;
+        }
+
+        private static string GetIndentation(string line)
+        {
+            string result = "";
+            for (int i = 0; i < line.Length; i++)
             {
-                s += " ";
-                i++;
+                if (line[i] > ' ')
+                    return result;
+
+                result += line[i];
             }
 
-            return s;
+            return result;
         }
 
-        private static string TrovaNomeEnum(string enumCorrenteCompleto)
+        private static bool IsEnumDeclareEnd(string line)
         {
-            string nomeEnumCorrente = string.Empty;
-            var enumCorrenteCompletoNoSpaziIniziali = enumCorrenteCompleto.Replace("\r\n", String.Empty).TrimStart();
-
-            for (int j = 0; j < enumCorrenteCompletoNoSpaziIniziali.Length; j++)
-            {
-                if (enumCorrenteCompletoNoSpaziIniziali[j] != ' ')
-                    nomeEnumCorrente += enumCorrenteCompletoNoSpaziIniziali[j];
-                else
-                {
-                    break;
-                }
-            }
-
-            return nomeEnumCorrente;
+            return line.Contains("}");
         }
 
-        private static string[] LeggiTuttiGliEnumCompleti(string s, int index)
+        private static bool IsEnumEntry(string line)
         {
-            List<string> enumCompleti = new List<string>();
-            while (index < s.Length)
-            {
-                var stringaEnumCorrenteCompleta = string.Empty;
-                while (s[index] != ',' && s[index] != '}')
-                {
-                    stringaEnumCorrenteCompleta += s[index];
-                    index++;
-                }
-                stringaEnumCorrenteCompleta =
-                    stringaEnumCorrenteCompleta.Replace("\r", "").Replace("\n", "").Replace("\t", "");
-                if (!string.IsNullOrEmpty(stringaEnumCorrenteCompleta.Replace(" ", "")))
-                {
-                    enumCompleti.Add(stringaEnumCorrenteCompleta);
-                }
-                if (s[index] == '}')
-                    break;
-                index++;
-            }
-            return enumCompleti.ToArray();
+            return Regex.IsMatch(line, @"^\s*[a-zA-Z]");
         }
 
-        private static string RimuoviCommentiDaStringa(string stringaEnumCorrenteCompleta)
+        private static bool IsDescriptionAttribute(string line)
         {
-            stringaEnumCorrenteCompleta = Regex.Replace(stringaEnumCorrenteCompleta, "//(.*?)\r?\n", string.Empty);
-            return Regex.Replace(stringaEnumCorrenteCompleta, "(/\\*([^*]|[\\r\\n]|(\\*+([^*/]|[\\r\\n])))*\\*+/)|(//.*)", string.Empty);
+            return line.Contains("[SRDescription") || line.Contains("[Description");
+        }
+
+        private static bool IsEnumDeclare(string line)
+        {
+            return line.Contains("enum");
         }
 
         private static bool IsEnumFile(string file)
